@@ -41,10 +41,16 @@ class RamBooster(private val context: Context) {
         return MemorySnapshot(availBytes = info.availMem, totalBytes = info.totalMem)
     }
 
-    /** Stops every background package that isn't exempt. Returns how many were asked to stop. */
-    fun boost(): Int {
+    /**
+     * Stops every background package that isn't exempt. [onProgress] receives a value from
+     * 0 to 1 as each package is stopped. Returns how many were asked to stop.
+     */
+    fun boost(onProgress: (Float) -> Unit = {}): Int {
         val targets = backgroundPackages()
-        targets.forEach { am.killBackgroundProcesses(it) }
+        targets.forEachIndexed { index, pkg ->
+            am.killBackgroundProcesses(pkg)
+            onProgress((index + 1).toFloat() / targets.size)
+        }
         return targets.size
     }
 

@@ -36,14 +36,20 @@ class JunkCleaner(private val context: Context) {
             .sortedByDescending { it.cacheBytes }
     }
 
-    /** Clears the cache of each package. Returns how many failed. */
-    fun clean(packages: List<String>): Int {
-        val latch = CountDownLatch(packages.size)
+    /**
+     * Clears the cache of each package. [onProgress] receives a value from 0 to 1 as each
+     * package finishes. It can be called from a system thread. Returns how many failed.
+     */
+    fun clean(packages: List<String>, onProgress: (Float) -> Unit = {}): Int {
+        val total = packages.size
+        val latch = CountDownLatch(total)
         val failed = AtomicInteger(0)
+        val done = AtomicInteger(0)
         packages.forEach { pkg ->
             pm.deleteApplicationCacheFiles(pkg, object : IPackageDataObserver.Stub() {
                 override fun onRemoveCompleted(packageName: String?, succeeded: Boolean) {
                     if (!succeeded) failed.incrementAndGet()
+                    onProgress(done.incrementAndGet().toFloat() / total)
                     latch.countDown()
                 }
             })

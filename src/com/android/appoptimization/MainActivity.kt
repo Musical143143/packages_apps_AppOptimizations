@@ -71,6 +71,11 @@ private data class ScreenData(
     val processes: List<ProcessUsage>,
 )
 
+/** Keys that tie a running action to the card that shows its progress. */
+private const val KEY_BOOST = "boost"
+private const val KEY_JUNK = "junk"
+private const val KEY_PROCESS = "process"
+
 @Composable
 private fun AppOptimizationScreen() {
     val context = LocalContext.current
@@ -80,6 +85,7 @@ private fun AppOptimizationScreen() {
 
     var data by remember { mutableStateOf<ScreenData?>(null) }
     var busy by remember { mutableStateOf(false) }
+    var progress by remember { mutableStateOf<TaskProgress?>(null) }
     // Messages are only ever replaced, never cleared, so the message card can animate out cleanly.
     var message by remember { mutableStateOf("") }
 
@@ -93,11 +99,20 @@ private fun AppOptimizationScreen() {
         }
     }
 
-    /** Runs one action, shows its result, then refreshes the figures. */
-    fun action(work: suspend () -> String) {
+    /**
+     * Runs one action and shows its progress on the card for [key]. [work] gets a `report`
+     * function that takes a fraction (0 to 1) and a label. Calls may come from any thread.
+     */
+    fun action(key: String, work: suspend ((Float, String) -> Unit) -> String) {
         scope.launch {
             busy = true
-            message = runCatching { work() }.getOrElse { "Something went wrong: ${it.message}" }
+            val report: (Float, String) -> Unit = { fraction, label ->
+                scope.launch(Dispatchers.Main) {
+                    progress = TaskProgress(key, fraction.coerceIn(0f, 1f), label)
+                }
+            }
+            message = runCatching { work(report) }.getOrElse { "Something went wrong: ${it.message}" }
+            progress = null
             reload()
             busy = false
         }
@@ -138,9 +153,14 @@ private fun AppOptimizationScreen() {
         StaggeredIn(1) {
             BoostCard(
                 busy = busy,
+                progress = progress?.takeIf { it.key == KEY_BOOST },
                 onBoost = {
-                    action {
-                        val stopped = withContext(Dispatchers.IO) { booster.boost() }
+                    action(KEY_BOOST) { report ->
+                        report(0f, "Stopping background apps")
+                        val stopped = withContext(Dispatchers.IO) {
+                            booster.boost { f -> report(f, "Stopping background apps") }
+                        }
+                        report(1f, "Measuring memory")
                         val before = current.memory.availBytes
                         // Give the system a moment to reclaim memory before measuring.
                         delay(1500)
@@ -156,11 +176,16 @@ private fun AppOptimizationScreen() {
             JunkCard(
                 junk = current.junk,
                 busy = busy,
+                progress = progress?.takeIf { it.key == KEY_JUNK },
                 onCleanAll = {
-                    action {
+                    action(KEY_JUNK) { report ->
                         val packages = current.junk.map { it.packageName }
                         val before = current.junk.sumOf { it.cacheBytes }
-                        val failed = withContext(Dispatchers.IO) { cleaner.clean(packages) }
+                        report(0f, "Clearing app caches")
+                        val failed = withContext(Dispatchers.IO) {
+                            cleaner.clean(packages) { f -> report(f, "Clearing app caches") }
+                        }
+                        report(1f, "Measuring what was freed")
                         val after = withContext(Dispatchers.IO) { cleaner.scan() }
                         val freed = maxOf(before - after.sumOf { it.cacheBytes }, 0L)
                         "Freed ${formatBytes(freed)}" +
@@ -168,10 +193,14 @@ private fun AppOptimizationScreen() {
                     }
                 },
                 onCleanApp = { app ->
-                    action {
+                    action(KEY_JUNK) { report ->
+                        report(0f, "Clearing ${app.label}")
                         val failed = withContext(Dispatchers.IO) {
-                            cleaner.clean(listOf(app.packageName))
+                            cleaner.clean(listOf(app.packageName)) { f ->
+                                report(f, "Clearing ${app.label}")
+                            }
                         }
+                        report(1f, "Clearing ${app.label}")
                         if (failed > 0) "Could not clear ${app.label}"
                         else "Cleared ${formatBytes(app.cacheBytes)} from ${app.label}"
                     }
@@ -183,9 +212,12 @@ private fun AppOptimizationScreen() {
             ProcessCard(
                 processes = current.processes,
                 busy = busy,
+                progress = progress?.takeIf { it.key == KEY_PROCESS },
                 onStop = { process ->
-                    action {
+                    action(KEY_PROCESS) { report ->
+                        report(0f, "Stopping ${process.label}")
                         withContext(Dispatchers.IO) { booster.stop(process.packageName) }
+                        report(1f, "Stopping ${process.label}")
                         delay(800)
                         "Stopped ${process.label}"
                     }
@@ -236,12 +268,12 @@ private fun OverviewCard(data: ScreenData, busy: Boolean) {
 }
 
 @Composable
-private fun BoostCard(busy: Boolean, onBoost: () -> Unit) {
+private fun BoostCard(busy: Boolean, progress: TaskProgress?, onBoost: () -> Unit) {
     SectionCard(
         title = "Boost RAM",
         subtitle = "Stops background apps to free memory. Apps you are using are not touched.",
     ) {
-        BusyBar(busy)
+        TaskProgressBar(progress)
         Button(onClick = onBoost, enabled = !busy) { Text("Boost now") }
     }
 }
@@ -250,6 +282,7 @@ private fun BoostCard(busy: Boolean, onBoost: () -> Unit) {
 private fun JunkCard(
     junk: List<AppCache>,
     busy: Boolean,
+    progress: TaskProgress?,
     onCleanAll: () -> Unit,
     onCleanApp: (AppCache) -> Unit,
 ) {
@@ -261,7 +294,7 @@ private fun JunkCard(
             else -> "${formatBytes(total)} cached in ${junk.size} apps"
         },
     ) {
-        BusyBar(busy)
+        TaskProgressBar(progress)
         junk.take(TOP_JUNK_APPS).forEach { app ->
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -295,6 +328,7 @@ private fun JunkCard(
 private fun ProcessCard(
     processes: List<ProcessUsage>,
     busy: Boolean,
+    progress: TaskProgress?,
     onStop: (ProcessUsage) -> Unit,
 ) {
     SectionCard(
@@ -305,7 +339,7 @@ private fun ProcessCard(
             "Highest memory use first"
         },
     ) {
-        BusyBar(busy)
+        TaskProgressBar(progress)
         processes.forEach { process ->
             Row(
                 modifier = Modifier.fillMaxWidth(),

@@ -15,7 +15,10 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.LinearProgressIndicator
@@ -34,6 +37,9 @@ import kotlin.math.roundToInt
 
 private const val CARD_ENTER_MS = 420
 private const val STAGGER_MS = 90
+
+/** Progress of one running action. [key] says which card it belongs to. */
+internal data class TaskProgress(val key: String, val fraction: Float, val label: String)
 
 /** Fades and slides a card in. Each index starts a little later, so the screen builds top to bottom. */
 @Composable
@@ -101,19 +107,47 @@ internal fun RamGauge(usedFraction: Float, boosting: Boolean, modifier: Modifier
     }
 }
 
-/** An indeterminate bar that slides in while an action is running and out when it finishes. */
+/**
+ * Shows a running action: its label, its percentage and a bar that fills as it goes.
+ * Slides in when the action starts and out when it finishes.
+ */
 @Composable
-internal fun BusyBar(busy: Boolean) {
+internal fun TaskProgressBar(progress: TaskProgress?) {
     AnimatedVisibility(
-        visible = busy,
+        visible = progress != null,
         enter = fadeIn() + expandVertically(),
         exit = fadeOut() + shrinkVertically(),
     ) {
-        LinearProgressIndicator(
-            modifier = Modifier.fillMaxWidth(),
-            color = MaterialTheme.colorScheme.primary,
-            trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+        val fraction by animateFloatAsState(
+            targetValue = progress?.fraction ?: 0f,
+            animationSpec = tween(durationMillis = 300),
+            label = "taskFraction",
         )
+        val percent = (fraction * 100).roundToInt()
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = progress?.label.orEmpty(),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    text = "$percent%",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+            }
+            LinearProgressIndicator(
+                progress = { fraction },
+                modifier = Modifier.fillMaxWidth(),
+                color = MaterialTheme.colorScheme.primary,
+                trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+            )
+        }
     }
 }
 
