@@ -95,6 +95,7 @@ private const val KEY_PROCESS = "process"
 
 private const val TOP_JUNK_APPS = 6
 private const val MESSAGE_MS = 3500L
+private const val MIN_PROGRESS_MS = 600L
 
 @Composable
 private fun OptimizerScreen(
@@ -150,8 +151,13 @@ private fun OptimizerScreen(
                     progress = TaskProgress(key, fraction.coerceIn(0f, 1f), label)
                 }
             }
+            val started = System.currentTimeMillis()
             val result = runCatching { work(report) }
                 .getOrElse { "Couldn't finish: ${it.message ?: "unknown error"}" }
+            // Hold the finished bar briefly, so quick actions still show their percentage.
+            progress = TaskProgress(key, 1f, "Done")
+            val remaining = MIN_PROGRESS_MS - (System.currentTimeMillis() - started)
+            if (remaining > 0) delay(remaining)
             progress = null
             messageText = result
             messageVisible = true
