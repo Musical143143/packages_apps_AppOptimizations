@@ -4,6 +4,11 @@ import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -75,7 +80,8 @@ private fun AppOptimizationScreen() {
 
     var data by remember { mutableStateOf<ScreenData?>(null) }
     var busy by remember { mutableStateOf(false) }
-    var message by remember { mutableStateOf<String?>(null) }
+    // Messages are only ever replaced, never cleared, so the message card can animate out cleanly.
+    var message by remember { mutableStateOf("") }
 
     suspend fun reload() {
         data = withContext(Dispatchers.IO) {
@@ -111,7 +117,13 @@ private fun AppOptimizationScreen() {
             onRefresh = { scope.launch { reload() } },
         )
 
-        message?.let { MessageCard(it) }
+        AnimatedVisibility(
+            visible = message.isNotEmpty(),
+            enter = fadeIn() + expandVertically(),
+            exit = fadeOut() + shrinkVertically(),
+        ) {
+            MessageCard(message)
+        }
 
         val current = data
         if (current == null) {
@@ -119,58 +131,67 @@ private fun AppOptimizationScreen() {
             return@Column
         }
 
-        OverviewCard(current)
+        StaggeredIn(0) {
+            OverviewCard(current, busy)
+        }
 
-        BoostCard(
-            memory = current.memory,
-            busy = busy,
-            onBoost = {
-                action {
-                    val stopped = withContext(Dispatchers.IO) { booster.boost() }
-                    val before = current.memory.availBytes
-                    // Give the system a moment to reclaim memory before measuring.
-                    delay(1500)
-                    val after = withContext(Dispatchers.IO) { booster.snapshot() }
-                    val gained = maxOf(after.availBytes - before, 0L)
-                    "Stopped $stopped background apps, ${formatBytes(gained)} more RAM free"
-                }
-            },
-        )
+        StaggeredIn(1) {
+            BoostCard(
+                busy = busy,
+                onBoost = {
+                    action {
+                        val stopped = withContext(Dispatchers.IO) { booster.boost() }
+                        val before = current.memory.availBytes
+                        // Give the system a moment to reclaim memory before measuring.
+                        delay(1500)
+                        val after = withContext(Dispatchers.IO) { booster.snapshot() }
+                        val gained = maxOf(after.availBytes - before, 0L)
+                        "Stopped $stopped background apps, ${formatBytes(gained)} more RAM free"
+                    }
+                },
+            )
+        }
 
-        JunkCard(
-            junk = current.junk,
-            busy = busy,
-            onCleanAll = {
-                action {
-                    val packages = current.junk.map { it.packageName }
-                    val before = current.junk.sumOf { it.cacheBytes }
-                    val failed = withContext(Dispatchers.IO) { cleaner.clean(packages) }
-                    val after = withContext(Dispatchers.IO) { cleaner.scan() }
-                    val freed = maxOf(before - after.sumOf { it.cacheBytes }, 0L)
-                    "Freed ${formatBytes(freed)}" +
-                        if (failed > 0) " ($failed apps could not be cleared)" else ""
-                }
-            },
-            onCleanApp = { app ->
-                action {
-                    val failed = withContext(Dispatchers.IO) { cleaner.clean(listOf(app.packageName)) }
-                    if (failed > 0) "Could not clear ${app.label}"
-                    else "Cleared ${formatBytes(app.cacheBytes)} from ${app.label}"
-                }
-            },
-        )
+        StaggeredIn(2) {
+            JunkCard(
+                junk = current.junk,
+                busy = busy,
+                onCleanAll = {
+                    action {
+                        val packages = current.junk.map { it.packageName }
+                        val before = current.junk.sumOf { it.cacheBytes }
+                        val failed = withContext(Dispatchers.IO) { cleaner.clean(packages) }
+                        val after = withContext(Dispatchers.IO) { cleaner.scan() }
+                        val freed = maxOf(before - after.sumOf { it.cacheBytes }, 0L)
+                        "Freed ${formatBytes(freed)}" +
+                            if (failed > 0) " ($failed apps could not be cleared)" else ""
+                    }
+                },
+                onCleanApp = { app ->
+                    action {
+                        val failed = withContext(Dispatchers.IO) {
+                            cleaner.clean(listOf(app.packageName))
+                        }
+                        if (failed > 0) "Could not clear ${app.label}"
+                        else "Cleared ${formatBytes(app.cacheBytes)} from ${app.label}"
+                    }
+                },
+            )
+        }
 
-        ProcessCard(
-            processes = current.processes,
-            busy = busy,
-            onStop = { process ->
-                action {
-                    withContext(Dispatchers.IO) { booster.stop(process.packageName) }
-                    delay(800)
-                    "Stopped ${process.label}"
-                }
-            },
-        )
+        StaggeredIn(3) {
+            ProcessCard(
+                processes = current.processes,
+                busy = busy,
+                onStop = { process ->
+                    action {
+                        withContext(Dispatchers.IO) { booster.stop(process.packageName) }
+                        delay(800)
+                        "Stopped ${process.label}"
+                    }
+                },
+            )
+        }
     }
 }
 
@@ -198,11 +219,16 @@ private fun Header(busy: Boolean, onRefresh: () -> Unit) {
 }
 
 @Composable
-private fun OverviewCard(data: ScreenData) {
+private fun OverviewCard(data: ScreenData, busy: Boolean) {
     val memory = data.memory
     val junkTotal = data.junk.sumOf { it.cacheBytes }
     SectionCard(title = "Overview", subtitle = "Memory and storage right now") {
-        UsageBar(fraction = memory.usedFraction)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.Center,
+        ) {
+            RamGauge(usedFraction = memory.usedFraction, boosting = busy)
+        }
         StatLine(label = "Free memory", value = formatBytes(memory.availBytes))
         StatLine(label = "Total memory", value = formatBytes(memory.totalBytes))
         StatLine(label = "Junk storage", value = formatBytes(junkTotal))
@@ -210,17 +236,13 @@ private fun OverviewCard(data: ScreenData) {
 }
 
 @Composable
-private fun BoostCard(memory: MemorySnapshot, busy: Boolean, onBoost: () -> Unit) {
+private fun BoostCard(busy: Boolean, onBoost: () -> Unit) {
     SectionCard(
         title = "Boost RAM",
         subtitle = "Stops background apps to free memory. Apps you are using are not touched.",
     ) {
+        BusyBar(busy)
         Button(onClick = onBoost, enabled = !busy) { Text("Boost now") }
-        Text(
-            text = "${formatBytes(memory.availBytes)} free right now",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
     }
 }
 
@@ -239,28 +261,27 @@ private fun JunkCard(
             else -> "${formatBytes(total)} cached in ${junk.size} apps"
         },
     ) {
-        if (junk.isNotEmpty()) {
-            junk.take(TOP_JUNK_APPS).forEach { app ->
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(modifier = Modifier.padding(end = 8.dp)) {
-                        Text(
-                            text = app.label,
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onSurface,
-                        )
-                        Text(
-                            text = formatBytes(app.cacheBytes),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    TextButton(onClick = { onCleanApp(app) }, enabled = !busy) {
-                        Text("Clear")
-                    }
+        BusyBar(busy)
+        junk.take(TOP_JUNK_APPS).forEach { app ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.padding(end = 8.dp)) {
+                    Text(
+                        text = app.label,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Text(
+                        text = formatBytes(app.cacheBytes),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                TextButton(onClick = { onCleanApp(app) }, enabled = !busy) {
+                    Text("Clear")
                 }
             }
         }
@@ -284,6 +305,7 @@ private fun ProcessCard(
             "Highest memory use first"
         },
     ) {
+        BusyBar(busy)
         processes.forEach { process ->
             Row(
                 modifier = Modifier.fillMaxWidth(),

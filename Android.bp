@@ -11,6 +11,8 @@ android_app {
     privileged: true,
     static_libs: [
         "androidx.activity_activity-compose",
+        "androidx.compose.animation_animation",
+        "androidx.compose.animation_animation-core",
         "androidx.compose.material3_material3",
         "androidx.compose.runtime_runtime",
         "androidx.compose.foundation_foundation",

@@ -1,5 +1,6 @@
 package com.android.appoptimization
 
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -7,7 +8,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedCard
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -18,6 +18,7 @@ import androidx.compose.ui.unit.dp
 /**
  * A Material 3 elevated card with a title, optional subtitle and a content slot.
  * Uses the surface-container tones so cards stay distinct from the background in both themes.
+ * The card eases to its new height when its content changes.
  */
 @Composable
 internal fun SectionCard(
@@ -34,7 +35,9 @@ internal fun SectionCard(
         ),
     ) {
         Column(
-            modifier = Modifier.padding(20.dp),
+            modifier = Modifier
+                .padding(20.dp)
+                .animateContentSize(),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -75,17 +78,6 @@ internal fun StatLine(label: String, value: String) {
             color = MaterialTheme.colorScheme.onSurface,
         )
     }
-}
-
-/** A thick progress bar that shows how full something is, from 0 to 1. */
-@Composable
-internal fun UsageBar(fraction: Float) {
-    LinearProgressIndicator(
-        progress = { fraction },
-        modifier = Modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.primary,
-        trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
-    )
 }
 
 /** A short status message shown at the top of the screen after an action. */
