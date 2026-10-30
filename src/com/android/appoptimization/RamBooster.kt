@@ -16,12 +16,13 @@ data class ProcessUsage(val packageName: String, val label: String, val pssBytes
 
 /**
  * Frees RAM by stopping background (not visible, not perceptible) processes.
- * Foreground apps, the home screen, and core system UI are never touched.
- * Blocking methods: call them off the main thread.
+ * Foreground apps, the home screen, core system UI, and apps the user protected are never
+ * stopped by a boost. Blocking methods: call them off the main thread.
  */
 class RamBooster(private val context: Context) {
     private val am = context.getSystemService(ActivityManager::class.java)
     private val pm: PackageManager = context.packageManager
+    private val prefs = OptimizerPrefs(context)
 
     private val exempt: Set<String> = buildSet {
         add(context.packageName)
@@ -42,8 +43,8 @@ class RamBooster(private val context: Context) {
     }
 
     /**
-     * Stops every background package that isn't exempt. [onProgress] receives a value from
-     * 0 to 1 as each package is stopped. Returns how many were asked to stop.
+     * Stops every background package that isn't exempt or protected. [onProgress] receives a
+     * value from 0 to 1 as each package is stopped. Returns how many were asked to stop.
      */
     fun boost(onProgress: (Float) -> Unit = {}): Int {
         val targets = backgroundPackages()
@@ -54,7 +55,7 @@ class RamBooster(private val context: Context) {
         return targets.size
     }
 
-    /** Stops the background processes of one package. */
+    /** Stops the background processes of one package the user picked. */
     fun stop(packageName: String) {
         if (packageName !in exempt) am.killBackgroundProcesses(packageName)
     }
@@ -77,11 +78,14 @@ class RamBooster(private val context: Context) {
             .take(limit)
     }
 
-    private fun backgroundPackages(): List<String> = am.runningAppProcesses.orEmpty()
-        .filter { it.importance > ActivityManager.RunningAppProcessInfo.IMPORTANCE_PERCEPTIBLE }
-        .flatMap { it.pkgList?.toList().orEmpty() }
-        .distinct()
-        .filterNot { it in exempt }
+    private fun backgroundPackages(): List<String> {
+        val protected = prefs.protectedApps()
+        return am.runningAppProcesses.orEmpty()
+            .filter { it.importance > ActivityManager.RunningAppProcessInfo.IMPORTANCE_PERCEPTIBLE }
+            .flatMap { it.pkgList?.toList().orEmpty() }
+            .distinct()
+            .filterNot { it in exempt || it in protected }
+    }
 
     private fun labelOf(packageName: String): String = runCatching {
         pm.getApplicationInfo(packageName, 0).loadLabel(pm).toString()

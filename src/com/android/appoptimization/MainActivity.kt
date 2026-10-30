@@ -72,6 +72,7 @@ private data class ScreenData(
 )
 
 /** Keys that tie a running action to the card that shows its progress. */
+private const val KEY_OPTIMIZE = "optimize"
 private const val KEY_BOOST = "boost"
 private const val KEY_JUNK = "junk"
 private const val KEY_PROCESS = "process"
@@ -82,10 +83,13 @@ private fun AppOptimizationScreen() {
     val scope = rememberCoroutineScope()
     val cleaner = remember { JunkCleaner(context) }
     val booster = remember { RamBooster(context) }
+    val prefs = remember { OptimizerPrefs(context) }
 
     var data by remember { mutableStateOf<ScreenData?>(null) }
     var busy by remember { mutableStateOf(false) }
     var progress by remember { mutableStateOf<TaskProgress?>(null) }
+    var protectedApps by remember { mutableStateOf(prefs.protectedApps()) }
+    var lastRun by remember { mutableStateOf(prefs.lastRun()) }
     // Messages are only ever replaced, never cleared, so the message card can animate out cleanly.
     var message by remember { mutableStateOf("") }
 
@@ -151,6 +155,47 @@ private fun AppOptimizationScreen() {
         }
 
         StaggeredIn(1) {
+            OptimizeCard(
+                busy = busy,
+                progress = progress?.takeIf { it.key == KEY_OPTIMIZE },
+                onOptimize = {
+                    action(KEY_OPTIMIZE) { report ->
+                        val junkBefore = current.junk.sumOf { it.cacheBytes }
+                        val ramBefore = current.memory.availBytes
+                        val packages = current.junk.map { it.packageName }
+
+                        // Junk is the first half of the progress bar, RAM the second.
+                        report(0f, "Clearing app caches")
+                        withContext(Dispatchers.IO) {
+                            cleaner.clean(packages) { f -> report(f * 0.5f, "Clearing app caches") }
+                        }
+                        report(0.5f, "Stopping background apps")
+                        val stopped = withContext(Dispatchers.IO) {
+                            booster.boost { f -> report(0.5f + f * 0.5f, "Stopping background apps") }
+                        }
+                        report(1f, "Measuring results")
+                        // Give the system a moment to reclaim memory before measuring.
+                        delay(1500)
+                        val junkAfter = withContext(Dispatchers.IO) { cleaner.scan() }
+                            .sumOf { it.cacheBytes }
+                        val ramAfter = withContext(Dispatchers.IO) { booster.snapshot() }.availBytes
+
+                        val run = RunRecord(
+                            timeMillis = System.currentTimeMillis(),
+                            junkFreed = maxOf(junkBefore - junkAfter, 0L),
+                            appsStopped = stopped,
+                            ramFreed = maxOf(ramAfter - ramBefore, 0L),
+                        )
+                        withContext(Dispatchers.IO) { prefs.saveRun(run) }
+                        lastRun = run
+                        "Optimised: freed ${formatBytes(run.junkFreed)} of junk " +
+                            "and ${formatBytes(run.ramFreed)} of RAM"
+                    }
+                },
+            )
+        }
+
+        StaggeredIn(2) {
             BoostCard(
                 busy = busy,
                 progress = progress?.takeIf { it.key == KEY_BOOST },
@@ -162,7 +207,6 @@ private fun AppOptimizationScreen() {
                         }
                         report(1f, "Measuring memory")
                         val before = current.memory.availBytes
-                        // Give the system a moment to reclaim memory before measuring.
                         delay(1500)
                         val after = withContext(Dispatchers.IO) { booster.snapshot() }
                         val gained = maxOf(after.availBytes - before, 0L)
@@ -172,7 +216,7 @@ private fun AppOptimizationScreen() {
             )
         }
 
-        StaggeredIn(2) {
+        StaggeredIn(3) {
             JunkCard(
                 junk = current.junk,
                 busy = busy,
@@ -208,11 +252,12 @@ private fun AppOptimizationScreen() {
             )
         }
 
-        StaggeredIn(3) {
+        StaggeredIn(4) {
             ProcessCard(
                 processes = current.processes,
                 busy = busy,
                 progress = progress?.takeIf { it.key == KEY_PROCESS },
+                protectedApps = protectedApps,
                 onStop = { process ->
                     action(KEY_PROCESS) { report ->
                         report(0f, "Stopping ${process.label}")
@@ -222,7 +267,15 @@ private fun AppOptimizationScreen() {
                         "Stopped ${process.label}"
                     }
                 },
+                onToggleKeep = { process ->
+                    val keep = process.packageName !in protectedApps
+                    protectedApps = prefs.setProtected(process.packageName, keep)
+                },
             )
+        }
+
+        StaggeredIn(5) {
+            HistoryCard(lastRun)
         }
     }
 }
@@ -329,18 +382,21 @@ private fun ProcessCard(
     processes: List<ProcessUsage>,
     busy: Boolean,
     progress: TaskProgress?,
+    protectedApps: Set<String>,
     onStop: (ProcessUsage) -> Unit,
+    onToggleKeep: (ProcessUsage) -> Unit,
 ) {
     SectionCard(
         title = "Background apps",
         subtitle = if (processes.isEmpty()) {
             "Nothing heavy running in the background"
         } else {
-            "Highest memory use first"
+            "Highest memory use first. Kept apps are never stopped by Boost."
         },
     ) {
         TaskProgressBar(progress)
         processes.forEach { process ->
+            val kept = process.packageName in protectedApps
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -353,13 +409,18 @@ private fun ProcessCard(
                         color = MaterialTheme.colorScheme.onSurface,
                     )
                     Text(
-                        text = formatBytes(process.pssBytes),
+                        text = formatBytes(process.pssBytes) + if (kept) " · Kept" else "",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                TextButton(onClick = { onStop(process) }, enabled = !busy) {
-                    Text("Stop")
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(onClick = { onToggleKeep(process) }, enabled = !busy) {
+                        Text(if (kept) "Unkeep" else "Keep")
+                    }
+                    TextButton(onClick = { onStop(process) }, enabled = !busy) {
+                        Text("Stop")
+                    }
                 }
             }
         }
