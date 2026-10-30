@@ -1,15 +1,16 @@
 package com.android.appoptimization
 
-import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
-import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -26,15 +27,13 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Done
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -44,6 +43,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
@@ -54,23 +55,28 @@ import kotlinx.coroutines.withContext
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent {
-            AppOptimizationTheme { AppOptimizationScreen() }
-        }
+        setContent { AppRoot() }
     }
 }
 
+/** Owns the accent colour, so a change re-themes the whole screen. */
 @Composable
-private fun AppOptimizationTheme(content: @Composable () -> Unit) {
-    val context = LocalContext.current
-    val dark = isSystemInDarkTheme()
-    val scheme = when {
-        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ->
-            if (dark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-        dark -> darkColorScheme()
-        else -> lightColorScheme()
+private fun AppRoot() {
+    val prefs = remember { OptimizerPrefs(LocalContext.current) }
+    var accentIndex by remember { mutableStateOf(prefs.accentIndex()) }
+    val accent by animateColorAsState(
+        targetValue = AccentColors[accentIndex],
+        animationSpec = tween(durationMillis = 500),
+        label = "accent",
+    )
+    AppOptimizationTheme(accent = accent) {
+        OptimizerScreen(
+            prefs = prefs,
+            accent = accent,
+            accentIndex = accentIndex,
+            onAccentChange = { accentIndex = it },
+        )
     }
-    MaterialTheme(colorScheme = scheme, content = content)
 }
 
 /** Everything the screen shows, gathered in one place. */
@@ -90,18 +96,25 @@ private const val TOP_JUNK_APPS = 6
 private const val MESSAGE_MS = 3500L
 
 @Composable
-private fun AppOptimizationScreen() {
+private fun OptimizerScreen(
+    prefs: OptimizerPrefs,
+    accent: Color,
+    accentIndex: Int,
+    onAccentChange: (Int) -> Unit,
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val cleaner = remember { JunkCleaner(context) }
     val booster = remember { RamBooster(context) }
-    val prefs = remember { OptimizerPrefs(context) }
 
     var data by remember { mutableStateOf<ScreenData?>(null) }
     var busy by remember { mutableStateOf(false) }
     var progress by remember { mutableStateOf<TaskProgress?>(null) }
     var protectedApps by remember { mutableStateOf(prefs.protectedApps()) }
     var lastRun by remember { mutableStateOf(prefs.lastRun()) }
+    var autoBoost by remember { mutableStateOf(prefs.autoBoostEnabled()) }
+    var threshold by remember { mutableStateOf(prefs.autoBoostThreshold()) }
+    var autoRan by remember { mutableStateOf(false) }
     var messageText by remember { mutableStateOf("") }
     var messageVisible by remember { mutableStateOf(false) }
     var messageId by remember { mutableStateOf(0) }
@@ -149,19 +162,29 @@ private fun AppOptimizationScreen() {
 
     LaunchedEffect(Unit) { reload() }
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    val background = MaterialTheme.colorScheme.background
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        accent.copy(alpha = 0.40f),
+                        SectionColors.history.copy(alpha = 0.18f),
+                        background,
+                    ),
+                ),
+            ),
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .statusBarsPadding()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+                .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 120.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Header(
-                busy = busy,
-                onRefresh = { scope.launch { reload() } },
-            )
+            Header(busy = busy, onRefresh = { scope.launch { reload() } })
 
             val current = data
             if (current != null) {
@@ -237,7 +260,11 @@ private fun AppOptimizationScreen() {
                         val after = withContext(Dispatchers.IO) { cleaner.scan() }
                         val freed = maxOf(junkTotal - after.sumOf { it.cacheBytes }, 0L)
                         "Freed ${formatBytes(freed)}" +
-                            if (failed > 0) " (${appsLabel(failed)} could not be cleared)" else ""
+                            if (failed > 0) {
+                                " · ${appsLabel(failed)} refused: cache clearing needs the system-app install"
+                            } else {
+                                ""
+                            }
                     }
                 }
 
@@ -250,7 +277,7 @@ private fun AppOptimizationScreen() {
                             }
                         }
                         report(1f, "Clearing ${app.label}")
-                        if (failed > 0) "Couldn't clear ${app.label}"
+                        if (failed > 0) "Couldn't clear ${app.label}: system permission missing"
                         else "Cleared ${formatBytes(app.cacheBytes)} from ${app.label}"
                     }
                 }
@@ -270,6 +297,14 @@ private fun AppOptimizationScreen() {
                         process.packageName,
                         process.packageName !in protectedApps,
                     )
+                }
+
+                // Runs once per launch, when auto-boost is on and memory is above the threshold.
+                LaunchedEffect(current) {
+                    if (!autoRan && autoBoost && memory.usedFraction >= threshold) {
+                        autoRan = true
+                        boostRam()
+                    }
                 }
 
                 StaggeredIn(0) {
@@ -297,6 +332,7 @@ private fun AppOptimizationScreen() {
                             } else {
                                 "Nothing to clean"
                             },
+                            color = SectionColors.junk,
                             enabled = !busy && junkTotal > 0L,
                             onClick = { cleanAllJunk() },
                             modifier = Modifier.weight(1f),
@@ -305,6 +341,7 @@ private fun AppOptimizationScreen() {
                             icon = Icons.Filled.Refresh,
                             title = "Boost RAM",
                             detail = "Stop background apps",
+                            color = SectionColors.memory,
                             enabled = !busy,
                             onClick = { boostRam() },
                             modifier = Modifier.weight(1f),
@@ -315,13 +352,17 @@ private fun AppOptimizationScreen() {
                 StaggeredIn(2) {
                     SectionCard(
                         title = "Junk storage",
+                        color = SectionColors.junk,
                         subtitle = if (current.junk.isEmpty()) {
                             "Nothing cached right now"
                         } else {
                             "${formatBytes(junkTotal)} across ${appsLabel(current.junk.size)}"
                         },
                     ) {
-                        TaskProgressBar(progress.takeIf { it?.key == KEY_JUNK })
+                        TaskProgressBar(
+                            progress = progress.takeIf { it?.key == KEY_JUNK },
+                            color = SectionColors.junk,
+                        )
                         if (current.junk.isEmpty()) {
                             EmptyState(Icons.Filled.Done, "Your apps are clean")
                         } else {
@@ -330,6 +371,7 @@ private fun AppOptimizationScreen() {
                                     title = app.label,
                                     detail = formatBytes(app.cacheBytes),
                                     fraction = share(app.cacheBytes, junkMax),
+                                    color = SectionColors.junk,
                                 ) {
                                     TextButton(
                                         onClick = { clearApp(app) },
@@ -348,13 +390,17 @@ private fun AppOptimizationScreen() {
                 StaggeredIn(3) {
                     SectionCard(
                         title = "Background apps",
+                        color = SectionColors.background,
                         subtitle = if (current.processes.isEmpty()) {
                             "Nothing heavy running in the background"
                         } else {
                             "Largest first. Kept apps are never stopped by Boost."
                         },
                     ) {
-                        TaskProgressBar(progress.takeIf { it?.key == KEY_PROCESS })
+                        TaskProgressBar(
+                            progress = progress.takeIf { it?.key == KEY_PROCESS },
+                            color = SectionColors.background,
+                        )
                         if (current.processes.isEmpty()) {
                             EmptyState(Icons.Filled.Info, "No heavy background apps right now")
                         } else {
@@ -365,6 +411,7 @@ private fun AppOptimizationScreen() {
                                     detail = formatBytes(process.pssBytes) +
                                         if (kept) " · Kept" else "",
                                     fraction = share(process.pssBytes, processMax),
+                                    color = SectionColors.background,
                                 ) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Switch(
@@ -384,6 +431,26 @@ private fun AppOptimizationScreen() {
                 }
 
                 StaggeredIn(4) {
+                    SettingsCard(
+                        accentIndex = accentIndex,
+                        onAccent = { index ->
+                            prefs.setAccentIndex(index)
+                            onAccentChange(index)
+                        },
+                        autoBoost = autoBoost,
+                        onAutoBoost = { enabled ->
+                            autoBoost = enabled
+                            prefs.setAutoBoostEnabled(enabled)
+                        },
+                        threshold = threshold,
+                        onThreshold = { threshold = it },
+                        onThresholdDone = { prefs.setAutoBoostThreshold(threshold) },
+                        enabled = !busy,
+                        color = SectionColors.settings,
+                    )
+                }
+
+                StaggeredIn(5) {
                     HistoryCard(lastRun)
                 }
             }
@@ -394,7 +461,8 @@ private fun AppOptimizationScreen() {
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .navigationBarsPadding()
-                .padding(16.dp),
+                .padding(16.dp)
+                .fillMaxWidth(),
         ) {
             AnimatedVisibility(
                 visible = messageVisible,
@@ -428,6 +496,11 @@ private fun Header(busy: Boolean, onRefresh: () -> Unit) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+        Icon(
+            imageVector = Icons.Filled.Settings,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         TextButton(onClick = onRefresh, enabled = !busy) { Text("Refresh") }
     }
 }

@@ -47,6 +47,27 @@ class OptimizerPrefs(context: Context) {
             .apply()
     }
 
+    /** Index into AccentColors. */
+    fun accentIndex(): Int = prefs.getInt(KEY_ACCENT, 0).coerceIn(0, AccentColors.lastIndex)
+
+    fun setAccentIndex(index: Int) {
+        prefs.edit().putInt(KEY_ACCENT, index.coerceIn(0, AccentColors.lastIndex)).apply()
+    }
+
+    /** When on, Boost runs once each time the app opens and memory is above the threshold. */
+    fun autoBoostEnabled(): Boolean = prefs.getBoolean(KEY_AUTO_BOOST, false)
+
+    fun setAutoBoostEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_AUTO_BOOST, enabled).apply()
+    }
+
+    /** Memory use (0 to 1) at which auto-boost runs. */
+    fun autoBoostThreshold(): Float = prefs.getFloat(KEY_THRESHOLD, 0.85f)
+
+    fun setAutoBoostThreshold(threshold: Float) {
+        prefs.edit().putFloat(KEY_THRESHOLD, threshold).apply()
+    }
+
     private companion object {
         const val FILE_NAME = "app_optimization"
         const val KEY_PROTECTED = "protected_apps"
@@ -54,5 +75,8 @@ class OptimizerPrefs(context: Context) {
         const val KEY_JUNK_FREED = "last_junk_freed"
         const val KEY_APPS_STOPPED = "last_apps_stopped"
         const val KEY_RAM_FREED = "last_ram_freed"
+        const val KEY_ACCENT = "accent_index"
+        const val KEY_AUTO_BOOST = "auto_boost"
+        const val KEY_THRESHOLD = "auto_boost_threshold"
     }
 }

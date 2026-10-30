@@ -24,6 +24,7 @@ internal fun AnimatedBytesStatLine(label: String, bytes: Long) {
 internal fun HistoryCard(run: RunRecord?) {
     SectionCard(
         title = "Last optimisation",
+        color = SectionColors.history,
         subtitle = if (run == null) {
             "Run Optimise now to see results here"
         } else {
