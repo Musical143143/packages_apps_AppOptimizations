@@ -21,3 +21,10 @@ android_app {
     min_sdk_version: "31",
     target_sdk_version: "current",
 }
+
+// Installs the privileged permission whitelist for this app.
+prebuilt_etc {
+    name: "privapp-permissions-appoptimization",
+    src: "privapp-permissions-appoptimization.xml",
+    sub_dir: "permissions",
+}
