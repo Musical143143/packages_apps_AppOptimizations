@@ -2,8 +2,6 @@ package com.android.appoptimization
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.material3.Button
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import java.text.SimpleDateFormat
@@ -21,25 +19,13 @@ internal fun AnimatedBytesStatLine(label: String, bytes: Long) {
     StatLine(label = label, value = formatBytes(animated.toLong()))
 }
 
-/** One-tap card: clears junk, then stops background apps. Progress covers both steps. */
-@Composable
-internal fun OptimizeCard(busy: Boolean, progress: TaskProgress?, onOptimize: () -> Unit) {
-    SectionCard(
-        title = "Optimise everything",
-        subtitle = "Clears junk storage, then stops background apps. Protected apps are kept.",
-    ) {
-        TaskProgressBar(progress)
-        Button(onClick = onOptimize, enabled = !busy) { Text("Optimise everything") }
-    }
-}
-
 /** Results of the last "Optimise everything" run, kept between launches. */
 @Composable
 internal fun HistoryCard(run: RunRecord?) {
     SectionCard(
         title = "Last optimisation",
         subtitle = if (run == null) {
-            "Run Optimise everything to see results here"
+            "Run Optimise now to see results here"
         } else {
             "Finished ${formatTime(run.timeMillis)}"
         },

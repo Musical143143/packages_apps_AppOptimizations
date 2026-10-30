@@ -2,6 +2,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.android.appoptimization">
 
+    <!-- Signature-level: needed by PackageManager.deleteApplicationCacheFiles. -->
+    <uses-permission android:name="android.permission.INTERNAL_DELETE_CACHE_FILES" />
     <!-- System-only: clear other apps' caches. Granted via privapp-permissions. -->
     <uses-permission android:name="android.permission.CLEAR_APP_CACHE" />
     <!-- System-only: read per-app cache sizes via StorageStatsManager. -->
