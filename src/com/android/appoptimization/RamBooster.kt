@@ -11,6 +11,9 @@ data class MemorySnapshot(val availBytes: Long, val totalBytes: Long) {
         else ((totalBytes - availBytes).toFloat() / totalBytes).coerceIn(0f, 1f)
 }
 
+/** A background app and how much memory its processes use (proportional set size). */
+data class ProcessUsage(val packageName: String, val label: String, val pssBytes: Long)
+
 /**
  * Frees RAM by stopping background (not visible, not perceptible) processes.
  * Foreground apps, the home screen, and core system UI are never touched.
@@ -18,6 +21,7 @@ data class MemorySnapshot(val availBytes: Long, val totalBytes: Long) {
  */
 class RamBooster(private val context: Context) {
     private val am = context.getSystemService(ActivityManager::class.java)
+    private val pm: PackageManager = context.packageManager
 
     private val exempt: Set<String> = buildSet {
         add(context.packageName)
@@ -25,7 +29,7 @@ class RamBooster(private val context: Context) {
         add("com.android.phone")
         add("com.android.settings")
         // Never kill the home screen; ask the system which app is the default launcher.
-        context.packageManager.resolveActivity(
+        pm.resolveActivity(
             Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME),
             PackageManager.MATCH_DEFAULT_ONLY,
         )?.activityInfo?.packageName?.let { add(it) }
@@ -37,14 +41,43 @@ class RamBooster(private val context: Context) {
         return MemorySnapshot(availBytes = info.availMem, totalBytes = info.totalMem)
     }
 
-    /** Stops background processes. Returns the number of packages asked to stop. */
+    /** Stops every background package that isn't exempt. Returns how many were asked to stop. */
     fun boost(): Int {
-        val targets = am.runningAppProcesses.orEmpty()
-            .filter { it.importance > ActivityManager.RunningAppProcessInfo.IMPORTANCE_PERCEPTIBLE }
-            .flatMap { it.pkgList?.toList().orEmpty() }
-            .distinct()
-            .filterNot { it in exempt }
+        val targets = backgroundPackages()
         targets.forEach { am.killBackgroundProcesses(it) }
         return targets.size
     }
+
+    /** Stops the background processes of one package. */
+    fun stop(packageName: String) {
+        if (packageName !in exempt) am.killBackgroundProcesses(packageName)
+    }
+
+    /** Background apps using the most memory, largest first. */
+    fun topProcesses(limit: Int = 5): List<ProcessUsage> {
+        val procs = am.runningAppProcesses.orEmpty()
+            .filter { it.importance > ActivityManager.RunningAppProcessInfo.IMPORTANCE_PERCEPTIBLE }
+        if (procs.isEmpty()) return emptyList()
+
+        val memory = am.getProcessMemoryInfo(procs.map { it.pid }.toIntArray()).toList()
+        return procs.zip(memory)
+            .mapNotNull { (proc, mem) ->
+                val pkg = proc.pkgList?.firstOrNull() ?: return@mapNotNull null
+                if (pkg in exempt) null else pkg to mem.totalPss.toLong() * 1024L
+            }
+            .groupBy({ it.first }, { it.second })
+            .map { (pkg, sizes) -> ProcessUsage(pkg, labelOf(pkg), sizes.sum()) }
+            .sortedByDescending { it.pssBytes }
+            .take(limit)
+    }
+
+    private fun backgroundPackages(): List<String> = am.runningAppProcesses.orEmpty()
+        .filter { it.importance > ActivityManager.RunningAppProcessInfo.IMPORTANCE_PERCEPTIBLE }
+        .flatMap { it.pkgList?.toList().orEmpty() }
+        .distinct()
+        .filterNot { it in exempt }
+
+    private fun labelOf(packageName: String): String = runCatching {
+        pm.getApplicationInfo(packageName, 0).loadLabel(pm).toString()
+    }.getOrDefault(packageName)
 }
