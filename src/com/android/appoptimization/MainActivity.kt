@@ -4,7 +4,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.animateColorAsState
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -62,7 +62,8 @@ class MainActivity : ComponentActivity() {
 /** Owns the accent colour, so a change re-themes the whole screen. */
 @Composable
 private fun AppRoot() {
-    val prefs = remember { OptimizerPrefs(LocalContext.current) }
+    val context = LocalContext.current
+    val prefs = remember { OptimizerPrefs(context) }
     var accentIndex by remember { mutableStateOf(prefs.accentIndex()) }
     val accent by animateColorAsState(
         targetValue = AccentColors[accentIndex],
