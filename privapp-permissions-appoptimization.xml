@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Install to /system/etc/permissions/privapp-permissions-appoptimization.xml
+  Grants the app's system-only permissions. Without this, the privileged
+  permissions are silently denied on builds that enforce privapp permissions.
+-->
+<permissions>
+    <privapp-permissions package="com.android.appoptimization">
+        <permission name="android.permission.CLEAR_APP_CACHE"/>
+        <permission name="android.permission.PACKAGE_USAGE_STATS"/>
+    </privapp-permissions>
+</permissions>
